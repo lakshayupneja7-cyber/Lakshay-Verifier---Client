@@ -2,59 +2,60 @@ package me.lakshay.verifierclient;
 
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.network.codec.PacketCodec;
 import net.minecraft.network.packet.CustomPayload;
 import net.minecraft.util.Identifier;
 
+import java.nio.charset.StandardCharsets;
 import java.util.stream.Collectors;
 
 public class VerifierClient implements ClientModInitializer {
 
+    // This must match your Paper plugin channel EXACTLY:
+    // server uses: "lakshay:verify"
+    public static final CustomPayload.Id<VerifyPayload> ID =
+            new CustomPayload.Id<>(Identifier.of("lakshay", "verify"));
+
+    public static final PacketCodec<RegistryByteBuf, VerifyPayload> CODEC =
+            PacketCodec.ofStatic(
+                    (buf, payload) -> {
+                        byte[] data = payload.data.getBytes(StandardCharsets.UTF_8);
+                        buf.writeVarInt(data.length);
+                        buf.writeBytes(data);
+                    },
+                    buf -> {
+                        int len = buf.readVarInt();
+                        byte[] data = new byte[len];
+                        buf.readBytes(data);
+                        return new VerifyPayload(new String(data, StandardCharsets.UTF_8));
+                    }
+            );
+
     @Override
     public void onInitializeClient() {
-        // Receive request from server
-        ClientPlayNetworking.registerGlobalReceiver(VerifyRequestPayload.ID, (payload, context) -> {
-            // Build mod list
+        // Register payload type for both directions
+        PayloadTypeRegistry.playS2C().register(ID, CODEC);
+        PayloadTypeRegistry.playC2S().register(ID, CODEC);
+
+        // Listen for server request
+        ClientPlayNetworking.registerGlobalReceiver(ID, (payload, context) -> {
+            String msg = payload.data;
+
+            if (!"REQ".equals(msg)) return;
+
             String mods = FabricLoader.getInstance().getAllMods().stream()
                     .map(m -> m.getMetadata().getId())
                     .collect(Collectors.joining(","));
 
-            // Send response
-            ClientPlayNetworking.send(new VerifyModsPayload(mods));
+            // Reply back to Paper server plugin via same channel
+            ClientPlayNetworking.send(new VerifyPayload("MODS|" + mods));
         });
     }
 
-    /**
-     * Server -> Client payload: just a request "REQ"
-     */
-    public record VerifyRequestPayload() implements CustomPayload {
-        public static final Id<VerifyRequestPayload> ID =
-                new Id<>(Identifier.of("lakshay", "verify_req"));
-
-        public static final PacketCodec<RegistryByteBuf, VerifyRequestPayload> CODEC =
-                PacketCodec.ofStatic((buf, value) -> {}, buf -> new VerifyRequestPayload());
-
-        @Override
-        public Id<? extends CustomPayload> getId() {
-            return ID;
-        }
-    }
-
-    /**
-     * Client -> Server payload: "MODS|<comma-separated-mod-ids>"
-     */
-    public record VerifyModsPayload(String mods) implements CustomPayload {
-        public static final Id<VerifyModsPayload> ID =
-                new Id<>(Identifier.of("lakshay", "verify_mods"));
-
-        public static final PacketCodec<RegistryByteBuf, VerifyModsPayload> CODEC =
-                PacketCodec.ofStatic(
-                        (buf, value) -> buf.writeString(value.mods),
-                        buf -> new VerifyModsPayload(buf.readString())
-                );
-
+    public record VerifyPayload(String data) implements CustomPayload {
         @Override
         public Id<? extends CustomPayload> getId() {
             return ID;
