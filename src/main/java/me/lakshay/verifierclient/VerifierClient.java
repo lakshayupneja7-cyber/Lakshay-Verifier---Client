@@ -14,20 +14,20 @@ import java.util.stream.Collectors;
 
 public class VerifierClient implements ClientModInitializer {
 
-    // This must match your Paper plugin channel EXACTLY:
-    // server uses: "lakshay:verify"
+    // MUST match Paper plugin channel exactly: "lakshay:verify"
     public static final CustomPayload.Id<VerifyPayload> ID =
             new CustomPayload.Id<>(Identifier.of("lakshay", "verify"));
 
+    // IMPORTANT: Paper plugin messaging uses RAW BYTES (no length prefix).
+    // So this codec reads/writes all remaining bytes exactly as-is.
     public static final PacketCodec<RegistryByteBuf, VerifyPayload> CODEC =
             PacketCodec.ofStatic(
                     (buf, payload) -> {
                         byte[] data = payload.data.getBytes(StandardCharsets.UTF_8);
-                        buf.writeVarInt(data.length);
                         buf.writeBytes(data);
                     },
                     buf -> {
-                        int len = buf.readVarInt();
+                        int len = buf.readableBytes();
                         byte[] data = new byte[len];
                         buf.readBytes(data);
                         return new VerifyPayload(new String(data, StandardCharsets.UTF_8));
@@ -36,11 +36,9 @@ public class VerifierClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        // Register payload type for both directions
         PayloadTypeRegistry.playS2C().register(ID, CODEC);
         PayloadTypeRegistry.playC2S().register(ID, CODEC);
 
-        // Listen for server request
         ClientPlayNetworking.registerGlobalReceiver(ID, (payload, context) -> {
             String msg = payload.data;
 
@@ -50,7 +48,6 @@ public class VerifierClient implements ClientModInitializer {
                     .map(m -> m.getMetadata().getId())
                     .collect(Collectors.joining(","));
 
-            // Reply back to Paper server plugin via same channel
             ClientPlayNetworking.send(new VerifyPayload("MODS|" + mods));
         });
     }
